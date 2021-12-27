@@ -72,10 +72,10 @@ func (c *Chan) renew() error {
 	playload["corpid"] = c.corpid
 	playload["corpsecret"] = c.corpsecret
 	resp, err := get("https://qyapi.weixin.qq.com/cgi-bin/gettoken", playload)
-	defer resp.Body.Close()
 	if err != nil {
 		return err
 	}
+	defer resp.Body.Close()
 	byts, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return err
@@ -105,13 +105,14 @@ func (c *Chan) SendTextCard(title, content, url string) error {
 	msgTextCard.Description = content
 	msgTextCard.URL = url
 	resp, err := post("https://qyapi.weixin.qq.com/cgi-bin/message/send", func() (queries map[string]string) {
+		queries = make(map[string]string)
 		queries["access_token"] = c.token
 		return
 	}(), msgTextCard)
-	defer resp.Body.Close()
 	if err != nil {
 		return err
 	}
+	defer resp.Body.Close()
 	msgResp := &struct {
 		ErrCode     int    `json:"errcode"`
 		ErrMsg      string `json:"errmsg"`
