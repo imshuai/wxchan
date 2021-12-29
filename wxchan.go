@@ -3,7 +3,6 @@ package wxchan
 import (
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -91,7 +90,6 @@ func (c *Chan) renew() error {
 	if msg.ErrCode != 0 {
 		return errors.New(msg.ErrMsg)
 	}
-	fmt.Println(msg.AccessToken)
 	c.token = msg.AccessToken
 	c.expireTimer = time.NewTimer(time.Second * time.Duration(msg.ExpiresIn))
 	return nil
@@ -158,7 +156,6 @@ func post(base string, queries map[string]string, msg msgserializer) (*http.Resp
 	if err != nil {
 		return nil, err
 	}
-	fmt.Println(url, msgString)
 	req, err := http.NewRequest("POST", url, strings.NewReader(msgString))
 	if err != nil {
 		return nil, err
