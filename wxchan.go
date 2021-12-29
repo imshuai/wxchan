@@ -3,6 +3,7 @@ package wxchan
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -18,12 +19,15 @@ type commonParms struct {
 	EnableDuplicateCheck   int    `json:"enable_duplicate_check"`
 	DuplicateCheckInterval int    `json:"duplicate_check_interval"`
 }
-type textcard struct {
+
+type msgTextcard struct {
 	commonParms
-	Title       string `json:"title"`
-	Description string `json:"description"`
-	URL         string `json:"url"`
-	BtnText     string `json:"btntxt"`
+	TextCard struct {
+		Title       string `json:"title"`
+		Description string `json:"description"`
+		URL         string `json:"url"`
+		BtnText     string `json:"btntxt"`
+	} `json:"textcard"`
 }
 type Chan struct {
 	corpid      string
@@ -37,8 +41,8 @@ type msgserializer interface {
 	Serialize() (string, error)
 }
 
-func (tc *textcard) Serialize() (string, error) {
-	byts, err := json.Marshal(tc)
+func (mt *msgTextcard) Serialize() (string, error) {
+	byts, err := json.Marshal(mt)
 	return string(byts), err
 }
 
@@ -52,12 +56,12 @@ func New(corpid, appsecret string, agentid int) (*Chan, error) {
 	if err != nil {
 		return nil, err
 	}
-	go func() {
+	go func(c *Chan) {
 		for {
 			<-c.expireTimer.C
 			c.renew()
 		}
-	}()
+	}(c)
 	return c, nil
 }
 
@@ -87,23 +91,20 @@ func (c *Chan) renew() error {
 	if msg.ErrCode != 0 {
 		return errors.New(msg.ErrMsg)
 	}
-	c = &Chan{
-		corpid:      c.corpid,
-		corpsecret:  c.corpsecret,
-		token:       msg.AccessToken,
-		expireTimer: time.NewTimer(time.Second * time.Duration(msg.ExpiresIn)),
-	}
+	fmt.Println(msg.AccessToken)
+	c.token = msg.AccessToken
+	c.expireTimer = time.NewTimer(time.Second * time.Duration(msg.ExpiresIn))
 	return nil
 }
 
 func (c *Chan) SendTextCard(title, content, url string) error {
-	msgTextCard := &textcard{}
+	msgTextCard := &msgTextcard{}
 	msgTextCard.Touser = "@all"
 	msgTextCard.MsgType = "textcard"
 	msgTextCard.AgentID = c.agentid
-	msgTextCard.Title = title
-	msgTextCard.Description = content
-	msgTextCard.URL = url
+	msgTextCard.TextCard.Title = title
+	msgTextCard.TextCard.Description = content
+	msgTextCard.TextCard.URL = url
 	resp, err := post("https://qyapi.weixin.qq.com/cgi-bin/message/send", func() (queries map[string]string) {
 		queries = make(map[string]string)
 		queries["access_token"] = c.token
@@ -157,6 +158,7 @@ func post(base string, queries map[string]string, msg msgserializer) (*http.Resp
 	if err != nil {
 		return nil, err
 	}
+	fmt.Println(url, msgString)
 	req, err := http.NewRequest("POST", url, strings.NewReader(msgString))
 	if err != nil {
 		return nil, err
