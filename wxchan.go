@@ -4,7 +4,9 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"io/ioutil"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 )
@@ -28,12 +30,17 @@ type msgTextcard struct {
 		BtnText     string `json:"btntxt"`
 	} `json:"textcard"`
 }
-type Chan struct {
-	corpid      string
-	agentid     int
-	corpsecret  string
-	token       string
-	expireTimer *time.Timer
+type WXChan struct {
+	corpid          string
+	agentid         int
+	corpsecret      string
+	token           string
+	tokenExpireTime time.Time
+	cache           string
+}
+
+func (c *WXChan) isTokenExpired() bool {
+	return time.Now().Local().After(c.tokenExpireTime)
 }
 
 type msgserializer interface {
@@ -45,26 +52,38 @@ func (mt *msgTextcard) Serialize() (string, error) {
 	return string(byts), err
 }
 
-func New(corpid, appsecret string, agentid int) (*Chan, error) {
-	c := &Chan{
+func New(corpid, appsecret string, agentid int, cacheFilePath string) (*WXChan, error) {
+	c := &WXChan{
 		corpid:     corpid,
 		agentid:    agentid,
 		corpsecret: appsecret,
+		token:      "",
+		cache:      cacheFilePath,
 	}
-	err := c.renew()
+	byts, err := ioutil.ReadFile(c.cache)
+	if os.IsPermission(err) {
+		return nil, err
+	}
+	if err == nil {
+		s := strings.Split(string(byts), ",")
+		c.token = s[0]
+		c.tokenExpireTime = func() time.Time {
+			t, _ := time.Parse("2006-01-02 15:04:05", s[1])
+			return t
+		}()
+		if !c.isTokenExpired() {
+			return c, nil
+		}
+	}
+
+	err = c.renew()
 	if err != nil {
 		return nil, err
 	}
-	go func(c *Chan) {
-		for {
-			<-c.expireTimer.C
-			c.renew()
-		}
-	}(c)
 	return c, nil
 }
 
-func (c *Chan) renew() error {
+func (c *WXChan) renew() error {
 	msg := &struct {
 		ErrCode     int    `json:"errcode"`
 		ErrMsg      string `json:"errmsg"`
@@ -91,11 +110,15 @@ func (c *Chan) renew() error {
 		return errors.New(msg.ErrMsg)
 	}
 	c.token = msg.AccessToken
-	c.expireTimer = time.NewTimer(time.Second * time.Duration(msg.ExpiresIn))
+	c.tokenExpireTime = time.Now().Add(time.Second * time.Duration(msg.ExpiresIn))
+	ioutil.WriteFile(c.cache, []byte(strings.Join([]string{c.token, c.tokenExpireTime.Format("2006-01-02 15:04:05")}, ",")), os.FileMode(os.O_CREATE|os.O_TRUNC|os.O_SYNC))
 	return nil
 }
 
-func (c *Chan) SendTextCard(title, content, url string) error {
+func (c *WXChan) SendTextCard(title, content, url string) error {
+	if c.isTokenExpired() {
+		c.renew()
+	}
 	msgTextCard := &msgTextcard{}
 	msgTextCard.Touser = "@all"
 	msgTextCard.MsgType = "textcard"
@@ -127,7 +150,13 @@ func (c *Chan) SendTextCard(title, content, url string) error {
 		return err
 	}
 	if msgResp.ErrCode != 0 {
-		return errors.New(msgResp.ErrMsg)
+		switch msgResp.ErrCode {
+		case 40014, 42001:
+			c.renew()
+			return c.SendTextCard(title, content, url)
+		default:
+			return errors.New(msgResp.ErrMsg)
+		}
 	}
 	return nil
 }
